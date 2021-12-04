@@ -20,22 +20,9 @@
 #include "common/LoadShaders.h"
 #include "common/UsefulFunctions.h"
 
-#define NUM_PARTICLES 1000 * 1000 // total number of particles to move
-#define WORK_GROUP_SIZE 100       // # work-items per work-group
+#define NUM_PARTICLES 1500*1500 // total number of particles to move
+#define WORK_GROUP_SIZE 50       // # work-items per work-group
 
-struct pos // positions
-{
-    float x, y, z, w;
-};
-struct vel // velocities
-{
-    float vx, vy, vz, vw;
-};
-
-struct color // colors
-{
-    float r, g, b, a;
-};
 
 // create references to SSBO's for these data
 GLuint posSSbo;
@@ -47,59 +34,64 @@ Camera camera = Camera();
 
 // I really need to implement a user interaction method that
 // requires fewer global variables
-const float cameraSpeed = 10.0f; 
+const float cameraSpeed = 100.0f; 
 const float mouseSensitivity = 0.05f;                       //Mouse sensitivity
 float horizontalAngle = 0.0f;                               //initial camera angle
 float verticalAngle = 0.0f;                                 //initial camera angle
 float initialFoV = 62.0f;                                   //initial camera field of view
-glm::vec3 cameraPosition(0, -50, -120);                         //initial camera position
+glm::vec3 cameraPosition(0, 200, -900);                         //initial camera position
 
+//General color scheme to follow
+glm::vec3 BACKGROUND_COLOR(0.82f, 0.705f, 0.549f);
+glm::vec3 PARTICLE_COLOR(0.8f, 0.8f, 0.8f);
+
+glm::vec3 randomInSphere(){
+    float u = randomBetween(0, 1);
+    glm::vec3 point = glm::vec3(randomBetween(-1, 1), randomBetween(-1, 1), randomBetween(-1, 1));
+
+    point = glm::normalize(point);
+
+    // cube root
+    float c = std::cbrt(u);
+
+    return point * c;
+}
 
 void initSSBOs()
 {
-    float posMin = -10;
-    float posMax = 10;
-
     glGenBuffers(1, &posSSbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, posSSbo);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, NUM_PARTICLES * sizeof(struct pos), NULL, GL_STATIC_DRAW);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, NUM_PARTICLES * sizeof(glm::vec4), NULL, GL_STATIC_DRAW);
     GLint bufMask = GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT; // the invalidate makes a big difference when re-writing
 
-    struct pos *points = (struct pos *)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, NUM_PARTICLES * sizeof(struct pos), bufMask);
+    // positions and velocities generated randomly in a sphere using normally distributed random numbers
+    // https://karthikkaranth.me/blog/generating-random-points-in-a-sphere/
+    glm::vec4 *points = (glm::vec4*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, NUM_PARTICLES * sizeof(glm::vec4), bufMask);
     for (int i = 0; i < NUM_PARTICLES; i++)
     {
-        points[i].x = 0.0;//randomBetween(posMin, posMax);
-        points[i].y = 0.0;//randomBetween(posMin, posMax);
-        points[i].z = 0.0;//randomBetween(posMin, posMax);
-        points[i].w = 1.0f;
+        points[i] = glm::vec4(randomInSphere(), 1.0f);
         // std::cout << points[i].x << " " << points[i].y << " " << points[i].z << std::endl;
     }
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
     glGenBuffers(1, &velSSbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, velSSbo);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, NUM_PARTICLES * sizeof(struct vel), NULL, GL_STATIC_DRAW);
-    struct vel *vels = (struct vel *)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, NUM_PARTICLES * sizeof(struct vel), bufMask);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, NUM_PARTICLES * sizeof(glm::vec4), NULL, GL_STATIC_DRAW);
+    glm::vec4 *vels = (glm::vec4*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, NUM_PARTICLES * sizeof(glm::vec4), bufMask);
     for (int i = 0; i < NUM_PARTICLES; i++)
     {
-        vels[i].vx = randomBetween(posMin/4.0, posMax/4.0);
-        vels[i].vy = randomBetween(posMin/4.0, posMax/4.0);
-        vels[i].vz = randomBetween(posMin/4.0, posMax/4.0);
-        vels[i].vw = 0.0f;
+        vels[i] = 0.1f * glm::vec4(randomInSphere(), 0.0f);
     }
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
     glGenBuffers(1, &colSSbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, colSSbo);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, NUM_PARTICLES * sizeof(struct color), NULL, GL_STATIC_DRAW);
-    struct color *colors = (struct color *)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, NUM_PARTICLES * sizeof(struct color), bufMask);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, NUM_PARTICLES * sizeof(glm::vec4), NULL, GL_STATIC_DRAW);
+    glm::vec4 *colors = (glm::vec4*)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, NUM_PARTICLES * sizeof(glm::vec4), bufMask);
     for (int i = 0; i < NUM_PARTICLES; i++)
     {
-        float randNum = randomBetween(0.5, 1);
-        colors[i].r = 0.82f * randNum;
-        colors[i].g = 0.705f * randNum;
-        colors[i].b = 0.549f * randNum;
-        colors[i].a = 1.0f;
+        // float randNum = randomBetween(0.5, 1);
+        colors[i] = glm::vec4(PARTICLE_COLOR, 1.0f);
     }
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 }
@@ -311,8 +303,8 @@ int main()
     }
 
     // Create the window
-    glfwWindowHint(GLFW_SAMPLES, 16);              // 8x antialiasing
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3); // We want OpenGL 3.3
+    glfwWindowHint(GLFW_SAMPLES, 8);              // 8x antialiasing
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4); // We want OpenGL 4.3
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE); // We don't want the old OpenGL
 
@@ -372,23 +364,41 @@ int main()
     GLuint renderShader = createShaders("shaders/vert.glsl", "shaders/frag.glsl");
     GLuint computeShader = createComputeShader("shaders/compute.glsl");
     GLuint vao;
-    GLint viewMatRef, projMatRef;
+    GLint viewMatRef, projMatRef, BH1Ref, BH2Ref, DTRef;
 
-    // initialize viewMatrix reference in shader
+    // initialize viewMatrix reference in render shader
     viewMatRef = glGetUniformLocation(renderShader, "viewMat");
     if(viewMatRef < 0)
     {   std::cerr << "couldn't find viewMatRef in shader\n";  }
 
-    // initialize viewMatrix reference in shader
+    // initialize viewMatrix reference in render shader
     projMatRef = glGetUniformLocation(renderShader, "projMat");
     if(projMatRef < 0)
     {   std::cerr << "couldn't find projMatRef in shader\n";  }
+
+    // initialize blackHole 1 reference in compute shader
+    BH1Ref = glGetUniformLocation(computeShader, "blackHole1");
+    if(BH1Ref < 0)
+    {   std::cerr << "couldn't find BH1Ref in shader\n";  }
+
+    // initialize blackHole 2 reference in compute shader
+    BH2Ref = glGetUniformLocation(computeShader, "blackHole2");
+    if(BH2Ref < 0)
+    {   std::cerr << "couldn't find BH2Ref in shader\n";  }
+
+    // initialize DT reference in compute shader
+    DTRef = glGetUniformLocation(computeShader, "DT");
+    if(DTRef < 0)
+    {   std::cerr << "couldn't find DTRef in shader\n";  }
 
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
 
 
-    // glPointSize(2.0f);
+    glEnable(GL_PROGRAM_POINT_SIZE);
+
+
+    // glPointSize(2.5f);
 
 
     glUseProgram(renderShader);
@@ -409,8 +419,14 @@ int main()
     glBindBuffer(GL_ARRAY_BUFFER, colSSbo);
     glVertexPointer(4, GL_FLOAT, 0, (void *)0);
 
+    //init timing variables
+    // double start = glfwGetTime();
+    // double current;
+    // double deltaTime;
+    // double sumFrameTimes = 0;
+    int numFrames = 0;
     // Set default background color to something closer to a night sky
-    glClearColor(0.18, 0.18, 0.18, 1.0);
+    glClearColor(0.05, 0.05, 0.05, 1.0);
     do
     {
         // Update input events
@@ -421,17 +437,40 @@ int main()
         // Clear the screen before drawing new things
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+        // get time since last frame
+        // current = glfwGetTime();
+        // deltaTime = current-start;
+        numFrames++;
+
+        // Optionally output frametimes
+        // std::cout << "New Frame in: " << deltaTime << std::endl;
+        // Reset timer
+        // start = glfwGetTime();
+
         glUseProgram(computeShader);
+        glUniform3f(BH1Ref,
+            300.0f*std::sin(glfwGetTime()*0.4),
+            100, 
+            300.0f*std::cos(glfwGetTime()*0.4)
+        );
+        glUniform3f(BH2Ref,
+            300.0f*std::sin(3.1415 + glfwGetTime()*0.4),
+            -100, 
+            300.0f*std::cos(3.1415 + glfwGetTime()*0.4)
+        );
+        glUniform1f(DTRef, glfwGetTime()*0.2);
         glDispatchCompute(NUM_PARTICLES / WORK_GROUP_SIZE, 1, 1);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
         glUseProgram(renderShader);
 
-        camera.update();
-        viewMatrix = camera.getViewMatrix();
+        //camera.update();
+    
+        viewMatrix = glm::lookAt(glm::vec3(0, 500, 1800), glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));//camera.getViewMatrix();
         projectionMatrix = camera.getProjectionMatrix();
         glUniformMatrix4fv(viewMatRef, 1, GL_FALSE, glm::value_ptr(viewMatrix)); // update viewmatrix in shader
         glUniformMatrix4fv(projMatRef, 1, GL_FALSE, glm::value_ptr(projectionMatrix)); // update projection matrix in shader
+        // glUniform1fv(DTRef, 1, glm::value_ptr((float)(deltaTime)));
 
         glDrawArrays(GL_POINTS, 0, NUM_PARTICLES);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -442,6 +481,9 @@ int main()
     } // Check if the ESC key was pressed or the window was closed
     while (glfwGetKey(window, GLFW_KEY_ESCAPE) != GLFW_PRESS &&
            glfwWindowShouldClose(window) == 0);
+
+    double avgFrameTime = glfwGetTime() / (double)numFrames;
+    std::cout << "Average frametimes for this run: " << avgFrameTime << std::endl;
 
     return 0;
 }

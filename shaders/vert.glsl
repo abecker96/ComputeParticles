@@ -20,8 +20,9 @@ uniform mat4 projMat;
 out vec3 fragmentColor;
 
 void main() {
-    // gl_PointSize = Position[gl_VertexID].z;
     gl_Position = projMat * viewMat * Position[gl_VertexID];
+    gl_PointSize = 1000.0/gl_Position.z;
+    // gl_PointSize = 2.0;
 
     //forward color data on to fragment shader
     fragmentColor = Color[gl_VertexID].xyz;
