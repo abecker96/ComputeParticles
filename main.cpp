@@ -20,8 +20,8 @@
 #include "common/LoadShaders.h"
 #include "common/UsefulFunctions.h"
 
-#define NUM_PARTICLES 2500 * 2500 // total number of particles to move
-#define WORK_GROUP_SIZE 1000       // # work-items per work-group
+#define NUM_PARTICLES 1000 * 1000 // total number of particles to move
+#define WORK_GROUP_SIZE 100       // # work-items per work-group
 
 struct pos // positions
 {
@@ -47,12 +47,12 @@ Camera camera = Camera();
 
 // I really need to implement a user interaction method that
 // requires fewer global variables
-const float cameraSpeed = 1.0f; 
+const float cameraSpeed = 10.0f; 
 const float mouseSensitivity = 0.05f;                       //Mouse sensitivity
 float horizontalAngle = 0.0f;                               //initial camera angle
 float verticalAngle = 0.0f;                                 //initial camera angle
 float initialFoV = 62.0f;                                   //initial camera field of view
-glm::vec3 cameraPosition(0, 0, -80);                         //initial camera position
+glm::vec3 cameraPosition(0, -50, -120);                         //initial camera position
 
 
 void initSSBOs()
@@ -68,9 +68,9 @@ void initSSBOs()
     struct pos *points = (struct pos *)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, NUM_PARTICLES * sizeof(struct pos), bufMask);
     for (int i = 0; i < NUM_PARTICLES; i++)
     {
-        points[i].x = 0.0f;//randomBetween(posMin, posMax);
-        points[i].y = 0.0f;//randomBetween(posMin, posMax);
-        points[i].z = 0.0f;//randomBetween(posMin, posMax);
+        points[i].x = 0.0;//randomBetween(posMin, posMax);
+        points[i].y = 0.0;//randomBetween(posMin, posMax);
+        points[i].z = 0.0;//randomBetween(posMin, posMax);
         points[i].w = 1.0f;
         // std::cout << points[i].x << " " << points[i].y << " " << points[i].z << std::endl;
     }
@@ -82,9 +82,9 @@ void initSSBOs()
     struct vel *vels = (struct vel *)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, NUM_PARTICLES * sizeof(struct vel), bufMask);
     for (int i = 0; i < NUM_PARTICLES; i++)
     {
-        vels[i].vx = randomBetween(posMin, posMax);
-        vels[i].vy = randomBetween(posMin, posMax);
-        vels[i].vz = randomBetween(posMin, posMax);
+        vels[i].vx = randomBetween(posMin/4.0, posMax/4.0);
+        vels[i].vy = randomBetween(posMin/4.0, posMax/4.0);
+        vels[i].vz = randomBetween(posMin/4.0, posMax/4.0);
         vels[i].vw = 0.0f;
     }
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
@@ -95,9 +95,10 @@ void initSSBOs()
     struct color *colors = (struct color *)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, NUM_PARTICLES * sizeof(struct color), bufMask);
     for (int i = 0; i < NUM_PARTICLES; i++)
     {
-        colors[i].r = randomBetween(0.82f -  0.18, 0.82f +  0.18);
-        colors[i].g = randomBetween(0.705f - 0.18, 0.705f + 0.18);
-        colors[i].b = randomBetween(0.549f - 0.18, 0.549f + 0.18);
+        float randNum = randomBetween(0.5, 1);
+        colors[i].r = 0.82f * randNum;
+        colors[i].g = 0.705f * randNum;
+        colors[i].b = 0.549f * randNum;
         colors[i].a = 1.0f;
     }
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
@@ -360,7 +361,7 @@ int main()
             10000.0f
         ),
         horizontalAngle, verticalAngle,
-        cameraSpeed*2, mouseSensitivity,
+        cameraSpeed, mouseSensitivity,
         true
     );
     glm::mat4 viewMatrix, projectionMatrix;
@@ -387,7 +388,26 @@ int main()
     glBindVertexArray(vao);
 
 
-    glPointSize(2.0f);
+    // glPointSize(2.0f);
+
+
+    glUseProgram(renderShader);
+
+    camera.update();
+    viewMatrix = camera.getViewMatrix();
+    projectionMatrix = camera.getProjectionMatrix();
+    glUniformMatrix4fv(viewMatRef, 1, GL_FALSE, glm::value_ptr(viewMatrix)); // update viewmatrix in shader
+    glUniformMatrix4fv(projMatRef, 1, GL_FALSE, glm::value_ptr(projectionMatrix)); // update projection matrix in shader
+
+    glEnableVertexAttribArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, posSSbo);
+    glVertexPointer(4, GL_FLOAT, 0, (void *)0);
+    glEnableVertexAttribArray(1);
+    glBindBuffer(GL_ARRAY_BUFFER, velSSbo);
+    glVertexPointer(4, GL_FLOAT, 0, (void *)0);
+    glEnableVertexAttribArray(2);
+    glBindBuffer(GL_ARRAY_BUFFER, colSSbo);
+    glVertexPointer(4, GL_FLOAT, 0, (void *)0);
 
     // Set default background color to something closer to a night sky
     glClearColor(0.18, 0.18, 0.18, 1.0);
@@ -413,23 +433,8 @@ int main()
         glUniformMatrix4fv(viewMatRef, 1, GL_FALSE, glm::value_ptr(viewMatrix)); // update viewmatrix in shader
         glUniformMatrix4fv(projMatRef, 1, GL_FALSE, glm::value_ptr(projectionMatrix)); // update projection matrix in shader
 
-        glEnableVertexAttribArray(0);
-        glBindBuffer(GL_ARRAY_BUFFER, posSSbo);
-        glVertexPointer(4, GL_FLOAT, 0, (void *)0);
-        glEnableVertexAttribArray(1);
-        glBindBuffer(GL_ARRAY_BUFFER, velSSbo);
-        glVertexPointer(4, GL_FLOAT, 0, (void *)0);
-        glEnableVertexAttribArray(2);
-        glBindBuffer(GL_ARRAY_BUFFER, colSSbo);
-        glVertexPointer(4, GL_FLOAT, 0, (void *)0);
-
         glDrawArrays(GL_POINTS, 0, NUM_PARTICLES);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-        glDisableVertexAttribArray(0);
-        glDisableVertexAttribArray(1);
-        glDisableVertexAttribArray(2);
-
 
         // actually draw created frame to screen
         glfwSwapBuffers(window);
