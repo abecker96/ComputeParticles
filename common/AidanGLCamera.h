@@ -1,5 +1,3 @@
-
-
 #ifndef AGLCAMERA_H
 #define AGLCAMERA_H
 
@@ -121,10 +119,13 @@ class Camera {
         void disableUserInput()
         {
             allowInput = false;
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
         }
         void enableUserInput()
         {
             allowInput = true;
+            glfwSetCursorPos(window, windowSizeX/2, windowSizeY/2);
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
         }
     private:
         GLFWwindow *window;                                         // Camera needs to know what window it's rendering in

@@ -13,15 +13,14 @@ layout( std430, binding=6 ) buffer Col
 
 uniform mat4 viewMat;
 uniform mat4 projMat;
+uniform float particleSizeScalar;
 
-// out gl_PerVertex {
-//     vec4 gl_Position;
-// };
+
 out vec3 fragmentColor;
 
 void main() {
     gl_Position = projMat * viewMat * Position[gl_VertexID];
-    gl_PointSize = 1000.0/gl_Position.z;
+    gl_PointSize = particleSizeScalar/gl_Position.z;
     // gl_PointSize = 2.0;
 
     //forward color data on to fragment shader

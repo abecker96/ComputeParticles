@@ -12,14 +12,16 @@ layout( std430, binding=6 ) buffer Col
 layout( local_size_x = 100, local_size_y = 1, local_size_z = 1 ) in;
 uniform vec3 blackHole1;
 uniform vec3 blackHole2;
+uniform float blackHoleAccel;
 uniform float DT;
+uniform float colorScale;
+uniform int sphereEnable;
 
 const vec4 Sphere1 = vec4( 0.0, -50.0, 0.0, 45 ); // x, y, z, r
 const vec4 Sphere2 = vec4( 0.0, 0.0, 0.0, 1000);
 
-const float blackHoleAccel = 70;
-const vec3 startColor = vec3(0.0, 0.0, 1.0);
-const vec3 endColor = vec3(1.0, 0.0, 0.0);
+uniform vec3 startColor;
+uniform vec3 endColor;
 
 // (could also have passed this in)
 vec3 Bounce( vec3 vin, vec3 n )
@@ -50,7 +52,7 @@ vec3 accelTowardsBH(vec3 pPos, vec3 bhPos){
 void main() {
     // const vec3 G = vec3(0, -9.8, 0);
     // const float DT = 0.0003;
-    const float AirResistance = 0.998;
+    const float AirResistance = 0.1;
     const float e = 2.7182818284;
 
     uint gid = gl_GlobalInvocationID.x;
@@ -61,15 +63,10 @@ void main() {
     vec3 accelVec = accelTowardsBH(p, blackHole1);
     accelVec += accelTowardsBH(p, blackHole2);
 
-    vec3 pp = p + v*DT + 0.5*DT*DT*accelVec;
-    vec3 vp = v + accelVec*DT;
+    vec3 pp = p + v*DT + 0.5*DT*DT*accelVec*AirResistance;
+    vec3 vp = v + accelVec*DT*AirResistance;
 
-    // if( IsInsideSphere( pp, Sphere1 ) )
-    // {
-    //     vp = BounceSphere( p, v, Sphere1 );
-    //     pp = p + vp*DT + .5*DT*DT*G;
-    // }
-    if( !IsInsideSphere( pp, Sphere2 ) )
+    if( sphereEnable == 1 && !IsInsideSphere( pp, Sphere2 ) )
     {
         vp = vec3(0, 0, 0);
         pp = normalize(pp) * 999.0;
@@ -77,11 +74,12 @@ void main() {
     }
 
     float lengthVP = length(vp);
-    float scale = (1-pow(e, lengthVP*-1.0));
+    float scale = (1-pow(e, -lengthVP*colorScale));
+
     vec3 outColor = startColor - startColor*scale;
     outColor += endColor*scale;
 
     Positions[gid].xyz = pp;
-    Velocities[gid].xyz = vp*AirResistance;
+    Velocities[gid].xyz = vp;
     Colors[gid] = vec4(outColor, 1.0);
 }

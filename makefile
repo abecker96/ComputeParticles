@@ -7,25 +7,17 @@
 #	@professor Dr. Scott King
 #	@class COSC 4328-001 Computer Graphics
 #	@version 0.0
-#
+#	
 ###########################################################
-Compiler =g++  -std=c++11 -Wall -Ofast
-LDLIBS =-lGLEW -lGL -lX11 -lglfw
+Compiler =g++ -std=c++11 -Wall
+LDLIBS =-lGLEW -lGL -lX11 -lglfw -lpthread -ldl
 Remove =rm
-Object =main.cpp -o
-Name =main.out
+Objects =main.cpp imgui/imgui.cpp imgui/imgui_demo.cpp imgui/imgui_draw.cpp imgui/imgui_impl_glfw.cpp imgui/imgui_tables.cpp imgui/imgui_widgets.cpp imgui/imgui_impl_opengl3.cpp
+Name =a.out
 	
 assignment5:
-	$(Compiler) $(Object) $(Name) $(LDLIBS)
-	
-clean:
-	$(Remove) $(Name)
+	$(Compiler) $(Objects) $(LDLIBS)
 
 run:
-	$(Compiler) $(Object) $(Name) $(LDLIBS)
-	./$(Name)
-
-remake:
-	$(Remove) $(Name)
-	$(Compiler) $(Object) $(Name) $(LDLIBS)
+	$(Compiler) $(Objects) $(LDLIBS)
 	./$(Name)
