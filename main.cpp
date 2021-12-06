@@ -30,8 +30,8 @@
 #include "common/LoadShaders.h"
 #include "common/UsefulFunctions.h"
 
-#define NUM_PARTICLES 1500 * 1500 // total number of particles to move
-#define WORK_GROUP_SIZE 100       // # work-items per work-group
+int NUM_PARTICLES = 1500 * 1500; // total number of particles to move
+int WORK_GROUP_SIZE = 100;       // # work-items per work-group
 
 // create references to SSBO's for these data
 GLuint posSSbo;
@@ -42,14 +42,21 @@ GLuint colSSbo;
 Camera camera = Camera();
 
 int windowWidth, windowHeight, windowSizeX, windowSizeY;
-float cameraSpeed, mouseSensitivity, horizontalAngle, verticalAngle, initialFoV, particleSize, colorSpeed, colorScale;
-float simulationSpeed, blackHoleGravity, blackHoleSpeed;
-bool userCameraInput;
+int boundingSphereEnable, floorEnable;
+float cameraSpeed, mouseSensitivity, horizontalAngle, verticalAngle, initialFoV;
+float particleSize, colorSpeed, colorScale;
+float simulationSpeed, blackHoleGravity, blackHoleSpeed, blackHoleYcoord, blackHoleXcoord;
+float blackHoleZcoord, blackHoleXZDisp, blackHoleYDisp, floorPos;
+bool userCameraInput, runSim, floorCheckBoxFlag;
+bool sphereCheckBoxFlag;
 glm::vec3 cameraPosition, startColorA, startColorB, endColorA, endColorB;
+glm::vec4 sphere;
+ImVec4 clearColor;
 GLuint renderShader, computeShader, vao;
 glm::mat4 viewMatrix, projectionMatrix;
-GLint viewMatRef, projMatRef, BH1Ref, BH2Ref, DTRef, particleSizeRef, BHGravityRef, sphereEnableRef, colorScaleRef, startColorRef, endColorRef;
-
+GLint viewMatRef, projMatRef, BH1Ref, BH2Ref, sphereRef, DTRef, particleSizeRef;
+GLint BHGravityRef, sphereEnableRef, floorEnableRef, colorScaleRef, startColorRef;
+GLint endColorRef, bouncingRef, floorPosRef;
 
 GLuint createComputeShader(const char *compute_file_path)
 {
@@ -234,29 +241,43 @@ GLuint createShaders(const char *vertex_file_path, const char *fragment_file_pat
     return ProgramID;
 }
 
-void initGlobals(){
+void initGlobals()
+{
     // I really need to implement a user interaction method that
     // requires fewer global variables
     cameraSpeed = 500.0f;
-    mouseSensitivity = 0.05f;    // Mouse sensitivity
-    horizontalAngle = 0.0f;            // initial camera angle
-    verticalAngle = 0.0f;              // initial camera angle
-    initialFoV = 62.0f;                // initial camera field of view
-    userCameraInput = true;
-    cameraPosition = glm::vec3(0, 500, -1800); // initial camera position
+    mouseSensitivity = 0.05f;                  // Mouse sensitivity
+    horizontalAngle = 0.0f;                    // initial camera angle
+    verticalAngle = 0.0f;                      // initial camera angle
+    initialFoV = 62.0f;                        // initial camera field of view
+    cameraPosition = glm::vec3(0.0f, 500.0f, -1800.0f); // initial camera position
     particleSize = 1000.0f;
     renderShader = createShaders("shaders/vert.glsl", "shaders/frag.glsl");
     computeShader = createComputeShader("shaders/compute.glsl");
-    colorSpeed = 0.25;
-    colorScale = 2.5;
-    simulationSpeed = 800;
-    blackHoleGravity = 25;
-    blackHoleSpeed = 0.4;
+    colorSpeed = 0.0f;
+    colorScale = 2.5f;
+    simulationSpeed = 400.0f;
+    blackHoleGravity = 25.0f;
+    blackHoleSpeed = 0.0005f;
+    blackHoleYcoord = 0.0f;
+    blackHoleXcoord = 0.0f;
+    blackHoleZcoord = 0.0f;
+    blackHoleXZDisp = 300.0f;
+    blackHoleYDisp = 100.0f;
+    floorPos = -1000.0f;
 
-    startColorA = glm::vec3(0.0, 0.0, 0.8);
-    startColorB = glm::vec3(0.8, 0.66, 0.0);
-    endColorA = glm::vec3(1.0, 0.0, 0.0);
-    endColorB = glm::vec3(0.0, 1.0, 0.28);
+    boundingSphereEnable = 1;
+
+    userCameraInput = true;
+    runSim = false;
+
+    startColorA = glm::vec3(0.0f, 0.0f, 0.8f);
+    startColorB = glm::vec3(0.0f, 0.494f, 0.7843f);
+    endColorA = glm::vec3(1.0f, 0.0f, 0.0f);
+    endColorB = glm::vec3(0.117f, 1.0f, 0.0f);
+
+    clearColor = ImVec4(0.05f, 0.05f, 0.05f, 1.0f);
+    sphere = glm::vec4(0.0f, 0.0f, 0.0f, 1000.0f);
 
     // initialize viewMatrix reference in render shader
     viewMatRef = glGetUniformLocation(renderShader, "viewMat");
@@ -287,6 +308,24 @@ void initGlobals(){
     if (BH2Ref < 0)
     {
         std::cerr << "couldn't find BH2Ref in shader\n";
+    }
+    // initialize sphere reference in compute shader
+    sphereRef = glGetUniformLocation(computeShader, "sphere");
+    if (sphereRef < 0)
+    {
+        std::cerr << "couldn't find BH2Ref in shader\n";
+    }
+    // initialize floorPos reference in compute shader
+    floorPosRef = glGetUniformLocation(computeShader, "floorPos");
+    if (floorPosRef < 0)
+    {
+        std::cerr << "couldn't find floorPosRef in shader\n";
+    }
+    // initialize floorEnable reference in compute shader
+    floorEnableRef = glGetUniformLocation(computeShader, "floorEnable");
+    if (floorEnableRef < 0)
+    {
+        std::cerr << "couldn't find floorEnableRef in shader\n";
     }
     // initialize blackHoleGravity reference in compute shader
     BHGravityRef = glGetUniformLocation(computeShader, "blackHoleAccel");
@@ -395,7 +434,8 @@ void toggleCameraInput()
     userCameraInput = !userCameraInput;
 }
 
-void initShaders(GLFWwindow *window){
+void initShaders(GLFWwindow *window)
+{
     initSSBOs();
 
     viewMatrix = camera.getViewMatrix();
@@ -428,7 +468,7 @@ void initShaders(GLFWwindow *window){
         horizontalAngle, verticalAngle,
         cameraSpeed, mouseSensitivity,
         true);
-    
+
     toggleCameraInput();
     if (userCameraInput)
     {
@@ -451,7 +491,8 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action, int mod
     }
 }
 
-GLFWwindow* initWindow(int &wW, int &wH, int &wX, int &wY){
+GLFWwindow *initWindow(int &wW, int &wH, int &wX, int &wY)
+{
     // Necessary due to glew bug
     glewExperimental = true;
     // Initialize glfw
@@ -502,7 +543,8 @@ GLFWwindow* initWindow(int &wW, int &wH, int &wX, int &wY){
     return window;
 }
 
-void initIMGUI(GLFWwindow *window){
+void initIMGUI(GLFWwindow *window)
+{
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -511,25 +553,42 @@ void initIMGUI(GLFWwindow *window){
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 130");
+    io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
 }
 
-void updateComputeShader(float deltaTime){
-    glUniform1f(DTRef, deltaTime * simulationSpeed);
-    glUniform1i(sphereEnableRef, 0);
+void updateComputeShader(float deltaTime)
+{
+    static float simTime = 0.0f;
+    double clockTime = glfwGetTime();
 
-    glUniform3f(BH1Ref, 300.0f * std::sin(glfwGetTime()*blackHoleSpeed), 100, 300.0f * std::cos(glfwGetTime()*blackHoleSpeed));
-    glUniform3f(BH2Ref, 300.0f * std::sin(3.1415 + glfwGetTime()*blackHoleSpeed), -100, 300.0f * std::cos(3.1415 + glfwGetTime()*blackHoleSpeed));
+    simTime += deltaTime * simulationSpeed;
+    glUniform1f(DTRef, deltaTime * simulationSpeed);
+    glUniform1i(sphereEnableRef, boundingSphereEnable);
+
+    glUniform3f(BH1Ref,
+                blackHoleXZDisp * std::sin(simTime * blackHoleSpeed) + blackHoleXcoord,
+                blackHoleYDisp + blackHoleYcoord,
+                blackHoleXZDisp * std::cos(simTime * blackHoleSpeed) + blackHoleZcoord);
+    glUniform3f(BH2Ref,
+                blackHoleXZDisp * std::sin(3.1415 + simTime * blackHoleSpeed) + blackHoleXcoord,
+                -blackHoleYDisp + blackHoleYcoord,
+                blackHoleXZDisp * std::cos(3.1415 + simTime * blackHoleSpeed) + blackHoleZcoord);
+    glUniform4fv(sphereRef, 1, glm::value_ptr(sphere));
     glUniform1f(BHGravityRef, blackHoleGravity);
 
-    glm::vec3 startColor = startColorA*(float)std::abs(1.570796 + std::sin(glfwGetTime()*colorSpeed)) + startColorB*(float)std::abs(std::sin(glfwGetTime()*colorSpeed));
-    glm::vec3 endColor = endColorA*(float)std::abs(1.570796 + std::sin(glfwGetTime()*colorSpeed)) + endColorB*(float)std::abs(std::sin(glfwGetTime()*colorSpeed));
-    
+    glUniform1f(floorPosRef, floorPos);
+    glUniform1i(floorEnableRef, floorEnable);
+
+    glm::vec3 startColor = startColorA * (float)std::abs(1.570796 + std::sin(clockTime * colorSpeed)) + startColorB * (float)std::abs(std::sin(clockTime * colorSpeed));
+    glm::vec3 endColor = endColorA * (float)std::abs(1.570796 + std::sin(clockTime * colorSpeed)) + endColorB * (float)std::abs(std::sin(clockTime * colorSpeed));
+
     glUniform3f(startColorRef, startColor.r, startColor.g, startColor.b);
     glUniform3f(endColorRef, endColor.r, endColor.g, endColor.b);
     glUniform1f(colorScaleRef, colorScale);
 }
 
-void updateRenderShader(){
+void updateRenderShader()
+{
     if (userCameraInput)
     {
         camera.update();
@@ -541,88 +600,175 @@ void updateRenderShader(){
     glUniform1f(particleSizeRef, particleSize);
 }
 
+void renderImGui(GLFWwindow *window){        
+    // Start the ImGui frame
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+    {   // GUI options
+        ImGui::Begin("Particle System Settings"); 
+        if (ImGui::Button("Start"))
+        {
+            runSim = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Stop"))
+        {
+            runSim = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reverse Sim"))
+        {
+            simulationSpeed = -simulationSpeed;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Restart"))
+        {
+            initSSBOs();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reset Camera"))
+        {   // re-initialize camera object
+            camera.init(
+                window, cameraPosition,
+                glm::perspective(
+                    glm::radians<float>(55),
+                    (float)windowSizeX / (float)windowSizeY,
+                    0.01f,
+                    10000.0f),
+                horizontalAngle, verticalAngle,
+                cameraSpeed, mouseSensitivity,
+                true);
+        }
+        ImGui::Text("Press Q to toggle manual camera control.");          
+        ImGui::Text("WASD+Mouse.\nShift to move down, Space to move up.");
+        ImGui::Separator();
+        if (ImGui::CollapsingHeader("Graphics"))
+        {
+            ImGui::ColorEdit4("Background color   ", (float *)&clearColor); 
+            ImGui::ColorEdit3("Low-speed color 1  ", (float *)&startColorA);
+            ImGui::ColorEdit3("High-speed color 1 ", (float *)&endColorA);  
+            ImGui::ColorEdit3("Low-speed color 2  ", (float *)&startColorB);
+            ImGui::ColorEdit3("High-speed color 2 ", (float *)&endColorB);  
+            ImGui::Text("This slider adjusts the amount of particles displaying\nlow-speed colors versus high-speed colors.");
+            ImGui::SliderFloat("Color scale", &colorScale, 0.0f, 50.0f);
+            ImGui::SliderFloat("Color speed", &colorSpeed, 0.0f, 5.0f); 
+            ImGui::SliderFloat("Particle size", &particleSize, 0.0f, 10000.0f);
+        }
+        if (ImGui::CollapsingHeader("Physics Settings"))
+        {
+            ImGui::Indent();
+            ImGui::SliderFloat("Timestep", &simulationSpeed, -5000.0f, 5000.0f);
+            if (ImGui::CollapsingHeader("Center Mass Settings"))
+            {
+                ImGui::Indent();
+                if (ImGui::Button("Set zero acceleration"))
+                {
+                    blackHoleGravity = 0.0f;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Reset position"))
+                {
+                    blackHoleXcoord = 0.0f;
+                    blackHoleYcoord = 0.0f;
+                    blackHoleZcoord = 0.0f;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Reset displacement"))
+                {
+                    blackHoleXZDisp = 300.0f;
+                    blackHoleYDisp = 100.0f;
+                }
+                ImGui::SliderFloat("Acceleration", &blackHoleGravity, -500.0f, 500.0f);
+                ImGui::SliderFloat("X-coordinate ", &blackHoleXcoord, -1000.0f, 1000.0f);
+                ImGui::SliderFloat("Y-coordinate ", &blackHoleYcoord, -1000.0f, 1000.0f);
+                ImGui::SliderFloat("Z-coordinate ", &blackHoleZcoord, -1000.0f, 1000.0f);
+                ImGui::SliderFloat("XZ-displacement", &blackHoleXZDisp, 0.0f, 1000.0f);
+                ImGui::SliderFloat("Y-displacement", &blackHoleYDisp, 0.0f, 1000.0f);
+                ImGui::Unindent();
+            }
+            if (ImGui::CollapsingHeader("Bounding Sphere Settings"))
+            {
+                ImGui::Indent();
+                ImGui::Checkbox("Sphere On/off", &sphereCheckBoxFlag);
+                ImGui::SliderFloat("X-coordinate", &sphere.x, -1000.0f, 1000.0f);
+                ImGui::SliderFloat("Y-coordinate", &sphere.y, -1000.0f, 1000.0f);
+                ImGui::SliderFloat("Z-coordinate", &sphere.z, -1000.0f, 1000.0f);
+                ImGui::SliderFloat("Radius", &sphere.w, 0.0f, 1000.0f);
+                ImGui::Unindent();
+            }
+            if(ImGui::CollapsingHeader("Bouncy Floor Settings")){
+                ImGui::Indent();
+                ImGui::Checkbox("Floor On/off", &floorCheckBoxFlag);
+                ImGui::SliderFloat("Floor Y-offset", &floorPos, -1000.0f, 1000.0f);
+                ImGui::Unindent();
+            }
+        }
+        ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+        ImGui::End();
+    }
+    if (sphereCheckBoxFlag)
+    {
+        boundingSphereEnable = 1;
+    }
+    else
+    {
+        boundingSphereEnable = 0;
+    }
+    if (floorCheckBoxFlag)
+    {
+        floorEnable = 1;
+    }
+    else
+    {
+        floorEnable = 0;
+    }
+
+    // Rendering
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+}
+
 int main()
 {
     GLFWwindow *window = initWindow(windowWidth, windowHeight, windowSizeX, windowSizeY);
-    
+
     initIMGUI(window);
     initGlobals();
-
-    // variables for ImGui windows
-    bool show_demo_window = true;
-    bool show_another_window = false;
-
     initShaders(window);
 
     // init timing variables
     double start = glfwGetTime();
     double current;
     double deltaTime;
-    // double sumFrameTimes = 0;
-    int numFrames = 0;
-    // Set default background color to something closer to a night sky
-    // glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glClearColor(0.05, 0.05, 0.05, 1.0);
     do
     {
         // Update input events
         glfwPollEvents();
 
         // Clear the screen before drawing new things
+        glClearColor(clearColor.x, clearColor.y, clearColor.z, clearColor.w);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        // Start the Dear ImGui frame
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
 
         // get time since last frame
         current = glfwGetTime();
         deltaTime = current - start;
-        numFrames++;
 
-        // Optionally output frametimes
-        // std::cout << "New Frame in: " << deltaTime << std::endl;
-        // Reset timer
         start = glfwGetTime();
 
-        glUseProgram(computeShader);
-        updateComputeShader(deltaTime);
-        glDispatchCompute(NUM_PARTICLES / WORK_GROUP_SIZE, 1, 1);
-        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+        if (runSim)
+        {
+            glUseProgram(computeShader);
+            updateComputeShader(deltaTime);
+            glDispatchCompute(NUM_PARTICLES / WORK_GROUP_SIZE, 1, 1);
+            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+        }
 
         glUseProgram(renderShader);
         updateRenderShader();
         glDrawArrays(GL_POINTS, 0, NUM_PARTICLES);
 
-        // if (show_demo_window)
-        {
-            // 2. Show a simple window that we create ourselves. We use a Begin/End pair to created a named window.
-            ImGui::ShowDemoWindow(&show_demo_window);
-            static float f = 0.0f;
-            static int counter = 0;
-
-            ImGui::Begin("Simulation Settings"); // Create a window called "Hello, world!" and append into it.
-
-            ImGui::Text("This is some useful text.");          // Display some text (you can use a format strings too)
-            ImGui::Checkbox("Demo Window", &show_demo_window); // Edit bools storing our window open/close state
-            ImGui::Checkbox("Another Window", &show_another_window);
-
-            ImGui::SliderFloat("float", &f, 0.0f, 1.0f);             // Edit 1 float using a slider from 0.0f to 1.0f
-            ImGui::ColorEdit3("clear color", (float *)&startColorA); // Edit 3 floats representing a color
-
-            if (ImGui::Button("Button")) // Buttons return true when clicked (most widgets return true when edited/activated)
-                counter++;
-            ImGui::SameLine();
-            ImGui::Text("counter = %d", counter);
-
-            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
-            ImGui::End();
-        }
-
-        // Rendering
-        ImGui::Render();
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        renderImGui(window);
 
         // actually draw created frame to screen
         glfwSwapBuffers(window);
@@ -630,9 +776,6 @@ int main()
     } // Check if the ESC key was pressed or the window was closed
     while (glfwGetKey(window, GLFW_KEY_ESCAPE) != GLFW_PRESS &&
            glfwWindowShouldClose(window) == 0);
-
-    double avgFrameTime = glfwGetTime() / (double)numFrames;
-    std::cout << "Average frametimes for this run: " << avgFrameTime << std::endl;
 
     return 0;
 }
