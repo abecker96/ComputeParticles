@@ -1,9 +1,8 @@
 #version 430 core
 //VERTEX SHADER
 
-//layout location needs to match attribute in glVertexAttribPointer()
-// "in" notes that this is input data
-// takes a vec3, vertexPosition_modelspace is just a name that makes sense
+// Position, Velocity, Color SSBOs
+// Direct from the compute shader
 layout( std430, binding=4 ) buffer Pos
 {   vec4 Position[];  };  // array of structures
 layout( std430, binding=5 ) buffer Vel
@@ -15,13 +14,14 @@ uniform mat4 viewMat;
 uniform mat4 projMat;
 uniform float particleSizeScalar;
 
-
 out vec3 fragmentColor;
 
 void main() {
+    // Set position accoring to VP matrices
     gl_Position = projMat * viewMat * Position[gl_VertexID];
+    // Modify particle size to give a sense of depth
+    // A realistic model would divide by (z*z), but there are only so many pixels in a screen
     gl_PointSize = particleSizeScalar/gl_Position.z;
-    // gl_PointSize = 2.0;
 
     //forward color data on to fragment shader
     fragmentColor = Color[gl_VertexID].xyz;

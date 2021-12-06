@@ -30,6 +30,21 @@
 #include "common/LoadShaders.h"
 #include "common/UsefulFunctions.h"
 
+// TODOs:
+//  ****Randomize starting positions/velocities
+//  ***Switch between CPU and GPU computation
+//  **CMAKE project
+//  *Functionalize reference creation and checking in initGlobals()
+//  Include air resistance
+//  Add adjustable workgroup size
+//  Add bouncy cylinders
+//  Add rotation to floor plane
+//  Sphereoids? Might be better to do in object-space, might not.
+//  Prettify code
+//      Object-oriented approach to window creation would be great.
+//  Functionalize SSBO generation. Shouldn't be *too* annoying, save lines of code.
+//      It'll have no positive performance impact though
+
 int NUM_PARTICLES = 1500 * 1500; // total number of particles to move
 int WORK_GROUP_SIZE = 100;       // # work-items per work-group
 
@@ -41,8 +56,11 @@ GLuint colSSbo;
 // Declaration of Camera object
 Camera camera = Camera();
 
+// Disgusting number of global variables.
+// TODO: Cleanup with code cleanup.
 int windowWidth, windowHeight, windowSizeX, windowSizeY;
 int boundingSphereEnable, floorEnable;
+int numParticlesTemp;
 float cameraSpeed, mouseSensitivity, horizontalAngle, verticalAngle, initialFoV;
 float particleSize, colorSpeed, colorScale;
 float simulationSpeed, blackHoleGravity, blackHoleSpeed, blackHoleYcoord, blackHoleXcoord;
@@ -60,8 +78,11 @@ GLint endColorRef, bouncingRef, floorPosRef;
 
 GLuint createComputeShader(const char *compute_file_path)
 {
+    // On the C++ side, creating a compute shader works exactly like other shaders
+    // Create shader, store reference
     GLuint ComputeShaderID = glCreateShader(GL_COMPUTE_SHADER);
 
+    // Parse shader string
     std::string ComputeShaderCode;
     std::ifstream ComputeShaderStream(compute_file_path, std::ios::in);
     if (ComputeShaderStream.is_open())
@@ -121,8 +142,6 @@ GLuint createComputeShader(const char *compute_file_path)
     // Cleanup
     glDetachShader(ProgramID, ComputeShaderID);
     glDeleteShader(ComputeShaderID);
-
-    // printf("Compute Shader source:\n%s\n", ComputeShaderCode.c_str());
 
     return ProgramID;
 }
@@ -268,6 +287,8 @@ void initGlobals()
 
     boundingSphereEnable = 1;
 
+    numParticlesTemp = NUM_PARTICLES;
+
     userCameraInput = true;
     runSim = false;
 
@@ -279,6 +300,7 @@ void initGlobals()
     clearColor = ImVec4(0.05f, 0.05f, 0.05f, 1.0f);
     sphere = glm::vec4(0.0f, 0.0f, 0.0f, 1000.0f);
 
+    // TODO: create a function for this, 4 buggy lines -> 1 easy function call
     // initialize viewMatrix reference in render shader
     viewMatRef = glGetUniformLocation(renderShader, "viewMat");
     if (viewMatRef < 0)
@@ -367,12 +389,16 @@ void initGlobals()
 
 glm::vec3 randomInSphere()
 {
+    // Generates a random xyz coordinate inside of a unit sphere at the origin
+    // Spheres work better than cubes in a particle sim
+    // from https://karthikkaranth.me/blog/generating-random-points-in-a-sphere/
+    // "Using normally distributed random numbers"
+    // It ain't computationally cheap, but the code is easy and the results are great.
+    // TODO: include in UsefulFunctions.h
     float u = randomBetween(0, 1);
     glm::vec3 point = glm::vec3(randomBetween(-1, 1), randomBetween(-1, 1), randomBetween(-1, 1));
-
     point = glm::normalize(point);
-
-    // cube root
+    //             cube root
     float c = std::cbrt(u);
 
     return point * c;
@@ -380,21 +406,30 @@ glm::vec3 randomInSphere()
 
 void initSSBOs()
 {
+    //I'm only going to comment one of these, because the other SSBOs are essentially the same
+    // Generate the initial buffer
     glGenBuffers(1, &posSSbo);
+    // Bind to graphics card memory
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, posSSbo);
+    // Allocate necessary storage 
+    // This might also be able to dump data at the same time. Needs testing though.
+    // If it ain't broke, don't fix it
     glBufferData(GL_SHADER_STORAGE_BUFFER, NUM_PARTICLES * sizeof(glm::vec4), NULL, GL_STATIC_DRAW);
-    GLint bufMask = GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT; // the invalidate makes a big difference when re-writing
+    // Set the bitmask that OpenGL will actually use when copying data to buffer
+    // This particular bitmask tells opengl to write to the buffer, and that previous contents can be thrown away
+    GLint bufMask = GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT;
 
-    // positions and velocities generated randomly in a sphere using normally distributed random numbers
-    // https://karthikkaranth.me/blog/generating-random-points-in-a-sphere/
+    // positions and velocities generated randomly in a sphere
+    // glMapBufferRange actually lets us stream this data to graphics card memory
     glm::vec4 *points = (glm::vec4 *)glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, NUM_PARTICLES * sizeof(glm::vec4), bufMask);
     for (int i = 0; i < NUM_PARTICLES; i++)
     {
         points[i] = glm::vec4(randomInSphere(), 1.0f);
-        // std::cout << points[i].x << " " << points[i].y << " " << points[i].z << std::endl;
     }
+    // unmap the buffer (break stream) now that we've uploaded the data
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
+    // Do it again, twice.
     glGenBuffers(1, &velSSbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, velSSbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, NUM_PARTICLES * sizeof(glm::vec4), NULL, GL_STATIC_DRAW);
@@ -422,7 +457,8 @@ void initSSBOs()
 }
 
 void toggleCameraInput()
-{
+{   // Function just helps deal with the buggy camera I wrote.
+    // TODO: put inside of camera object
     if (userCameraInput)
     {
         camera.disableUserInput();
@@ -436,25 +472,10 @@ void toggleCameraInput()
 
 void initShaders(GLFWwindow *window)
 {
+    // This function just packages most of the setup into a single function call
     initSSBOs();
 
-    viewMatrix = camera.getViewMatrix();
-    projectionMatrix = camera.getProjectionMatrix();
-    glUniformMatrix4fv(viewMatRef, 1, GL_FALSE, glm::value_ptr(viewMatrix));       // update viewmatrix in shader
-    glUniformMatrix4fv(projMatRef, 1, GL_FALSE, glm::value_ptr(projectionMatrix)); // update projection matrix in shader
-
-    glEnableVertexAttribArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, posSSbo);
-    glVertexPointer(4, GL_FLOAT, 0, (void *)0);
-    glEnableVertexAttribArray(1);
-    glBindBuffer(GL_ARRAY_BUFFER, velSSbo);
-    glVertexPointer(4, GL_FLOAT, 0, (void *)0);
-    glEnableVertexAttribArray(2);
-    glBindBuffer(GL_ARRAY_BUFFER, colSSbo);
-    glVertexPointer(4, GL_FLOAT, 0, (void *)0);
-
-    glGenVertexArrays(1, &vao);
-    glBindVertexArray(vao);
+    // Pass initial view/projection matrices to rendershader
     glUseProgram(renderShader);
 
     // Initialize camera object
@@ -468,22 +489,58 @@ void initShaders(GLFWwindow *window)
         horizontalAngle, verticalAngle,
         cameraSpeed, mouseSensitivity,
         true);
-
     toggleCameraInput();
     if (userCameraInput)
     {
+        // Again, necessary because of buggy camera.
+        // TODO: remove when camera works properly.
         camera.update();
     }
+    viewMatrix = camera.getViewMatrix();
+    projectionMatrix = camera.getProjectionMatrix();
+    glUniformMatrix4fv(viewMatRef, 1, GL_FALSE, glm::value_ptr(viewMatrix));       // update viewmatrix in shader
+    glUniformMatrix4fv(projMatRef, 1, GL_FALSE, glm::value_ptr(projectionMatrix)); // update projection matrix in shader
+
+    // Give rendershader references to same SSBOs compute shader uses
+    glEnableVertexAttribArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, posSSbo);
+    glVertexPointer(4, GL_FLOAT, 0, (void *)0);
+    glEnableVertexAttribArray(1);
+    glBindBuffer(GL_ARRAY_BUFFER, velSSbo);
+    glVertexPointer(4, GL_FLOAT, 0, (void *)0);
+    glEnableVertexAttribArray(2);
+    glBindBuffer(GL_ARRAY_BUFFER, colSSbo);
+    glVertexPointer(4, GL_FLOAT, 0, (void *)0);
+
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
 }
 
 void key_callback(GLFWwindow *window, int key, int scancode, int action, int mods)
 {
+    // Function GLFW will use to handle keypresses
     if (action == GLFW_PRESS)
     {
         switch (key)
         {
         case GLFW_KEY_Q:
+            // toggle user-interaction with camera
             toggleCameraInput();
+            break;
+        case GLFW_KEY_E:
+            // re-initialize camera object to reset camera
+            // Again, because my buggy camera breaks a lot.
+            // TODO: Probably remove when fixed
+            camera.init(
+                window, cameraPosition,
+                glm::perspective(
+                    glm::radians<float>(55),
+                    (float)windowSizeX / (float)windowSizeY,
+                    0.01f,
+                    10000.0f),
+                horizontalAngle, verticalAngle,
+                cameraSpeed, mouseSensitivity,
+                true);
             break;
         default:
             break;
@@ -491,8 +548,9 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action, int mod
     }
 }
 
-GLFWwindow *initWindow(int &wW, int &wH, int &wX, int &wY)
+GLFWwindow *initWindow(int &windowWidth, int &windowHeight, int &windowPxX, int &windowPxY)
 {
+    // Package up boilerplate window creation into a single function
     // Necessary due to glew bug
     glewExperimental = true;
     // Initialize glfw
@@ -510,10 +568,10 @@ GLFWwindow *initWindow(int &wW, int &wH, int &wX, int &wY)
     GLFWwindow *window;
     // Check size of screen's available work area
     // This is the area not taken up by taskbars and other OS objects
-    glfwGetMonitorWorkarea(glfwGetPrimaryMonitor(), &wW, &wH, &wX, &wY);
+    glfwGetMonitorWorkarea(glfwGetPrimaryMonitor(), &windowWidth, &windowHeight, &windowPxX, &windowPxY);
 
     // make window
-    window = glfwCreateWindow(wX, wY, "Aidan Becker Assignment 5", NULL, NULL);
+    window = glfwCreateWindow(windowPxX, windowPxY, "Aidan Becker Assignment 5", NULL, NULL);
     if (window == NULL)
     {
         fprintf(stderr, "Failed to open GLFW window. If you have an Intel GPU, they are not 3.3 compatible.\n");
@@ -532,10 +590,7 @@ GLFWwindow *initWindow(int &wW, int &wH, int &wX, int &wY)
     glfwSetInputMode(window, GLFW_STICKY_KEYS, GL_TRUE);
     glfwSetInputMode(window, GLFW_STICKY_MOUSE_BUTTONS, GL_TRUE);
 
-    // TODO: probably not necessary for this project, because only rendering points at the moment.
-    // Enable depth test so objects render based on closest distance from camera
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LESS);
+    // Required to allow vertex shader to scale points based on depth
     glEnable(GL_PROGRAM_POINT_SIZE);
 
     glfwSetKeyCallback(window, key_callback);
@@ -545,7 +600,7 @@ GLFWwindow *initWindow(int &wW, int &wH, int &wX, int &wY)
 
 void initIMGUI(GLFWwindow *window)
 {
-    // Setup Dear ImGui context
+    // Setup ImGui context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
@@ -558,6 +613,8 @@ void initIMGUI(GLFWwindow *window)
 
 void updateComputeShader(float deltaTime)
 {
+    //Update all of the uniform control variables in the compute shader
+    // Keep a static simulation time separate from glfwGetTime to play/pause/rewind simulation
     static float simTime = 0.0f;
     double clockTime = glfwGetTime();
 
@@ -589,6 +646,8 @@ void updateComputeShader(float deltaTime)
 
 void updateRenderShader()
 {
+    // Update all uniform variables to control rendershader
+    // Really just VP matrices and particle size variables, to keep most computation in... compute shader
     if (userCameraInput)
     {
         camera.update();
@@ -600,13 +659,25 @@ void updateRenderShader()
     glUniform1f(particleSizeRef, particleSize);
 }
 
-void renderImGui(GLFWwindow *window){        
+void renderImGui(GLFWwindow *window){      
+    // Function to render ImGui over openGL GLFW context  
     // Start the ImGui frame
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
-    {   // GUI options
-        ImGui::Begin("Particle System Settings"); 
+    {
+        ImGui::Begin("Settings"); 
+        ImGui::InputInt("Number of particles", &numParticlesTemp);
+        if(ImGui::Button("Set particle count")){
+            NUM_PARTICLES = numParticlesTemp;
+            initSSBOs();
+        }
+        // NOTE: This is not really adjustable at runtime
+        // The only way to actually do this is to recompile the
+        // compute shader with the new local workgroup size.
+        // Which is code that I don't feel like writing right now.
+        // ImGui::DragInt("Workgroup size\nNOTE: cannot really do anything", &WORK_GROUP_SIZE);
+        ImGui::SliderFloat("Timestep", &simulationSpeed, -5000.0f, 5000.0f);
         if (ImGui::Button("Start"))
         {
             runSim = true;
@@ -640,7 +711,7 @@ void renderImGui(GLFWwindow *window){
                 cameraSpeed, mouseSensitivity,
                 true);
         }
-        ImGui::Text("Press Q to toggle manual camera control.");          
+        ImGui::Text("Press Q to toggle manual camera control.\nE resets the camera, and ESC closes window");          
         ImGui::Text("WASD+Mouse.\nShift to move down, Space to move up.");
         ImGui::Separator();
         if (ImGui::CollapsingHeader("Graphics"))
@@ -651,14 +722,13 @@ void renderImGui(GLFWwindow *window){
             ImGui::ColorEdit3("Low-speed color 2  ", (float *)&startColorB);
             ImGui::ColorEdit3("High-speed color 2 ", (float *)&endColorB);  
             ImGui::Text("This slider adjusts the amount of particles displaying\nlow-speed colors versus high-speed colors.");
-            ImGui::SliderFloat("Color scale", &colorScale, 0.0f, 50.0f);
+            ImGui::SliderFloat("Color scale", &colorScale, 0.0f, 15.0f);
             ImGui::SliderFloat("Color speed", &colorSpeed, 0.0f, 5.0f); 
             ImGui::SliderFloat("Particle size", &particleSize, 0.0f, 10000.0f);
         }
         if (ImGui::CollapsingHeader("Physics Settings"))
         {
             ImGui::Indent();
-            ImGui::SliderFloat("Timestep", &simulationSpeed, -5000.0f, 5000.0f);
             if (ImGui::CollapsingHeader("Center Mass Settings"))
             {
                 ImGui::Indent();
@@ -707,6 +777,8 @@ void renderImGui(GLFWwindow *window){
         ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
         ImGui::End();
     }
+    // A couple of control variables
+    // TODO: There's absolutely a better way to deal with these when I get around to it
     if (sphereCheckBoxFlag)
     {
         boundingSphereEnable = 1;
@@ -724,20 +796,22 @@ void renderImGui(GLFWwindow *window){
         floorEnable = 0;
     }
 
-    // Rendering
+    // Render ImGui windows
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
 int main()
 {
+    // initialize various contexts
     GLFWwindow *window = initWindow(windowWidth, windowHeight, windowSizeX, windowSizeY);
-
     initIMGUI(window);
     initGlobals();
     initShaders(window);
 
-    // init timing variables
+    // initialize timing variables
+    // Might as well be global honestly, everything else is at this point.
+    // TODO: HEAVY refactor of global everything.
     double start = glfwGetTime();
     double current;
     double deltaTime;
@@ -750,12 +824,12 @@ int main()
         glClearColor(clearColor.x, clearColor.y, clearColor.z, clearColor.w);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // get time since last frame
+        // update timing variables
         current = glfwGetTime();
         deltaTime = current - start;
-
         start = glfwGetTime();
 
+        // run compute shader
         if (runSim)
         {
             glUseProgram(computeShader);
@@ -764,13 +838,18 @@ int main()
             glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
         }
 
+        // render particles
         glUseProgram(renderShader);
         updateRenderShader();
         glDrawArrays(GL_POINTS, 0, NUM_PARTICLES);
 
+        // render ImGui
         renderImGui(window);
+        if(WORK_GROUP_SIZE < 1){
+            WORK_GROUP_SIZE = 1;
+        }
 
-        // actually draw created frame to screen
+        // draw frame to screen
         glfwSwapBuffers(window);
 
     } // Check if the ESC key was pressed or the window was closed
