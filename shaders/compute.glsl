@@ -54,14 +54,15 @@ void main() {
     // that any particular instance is controlling
     uint gid = gl_GlobalInvocationID.x;
 
+    // Get position and velocity of this particle
+    vec3 p = Positions[gid].xyz;
+    vec3 v = Velocities[gid].xyz;
 
     // Update acceleration towards both masses
     vec3 accelVec = accelTowardsBH(p, blackHole1);
     accelVec += accelTowardsBH(p, blackHole2);
 
-    // General idea is to use Verlet Integration for physics modeling
-    vec3 p = Positions[gid].xyz;
-    vec3 v = Velocities[gid].xyz;
+    // Use Verlet Integration for physics modeling
     vec3 pp = p + v*DT + 0.5*DT*DT*accelVec*(sign(DT));
     vec3 vp = v + accelVec*DT;
 
