@@ -571,7 +571,7 @@ GLFWwindow *initWindow(int &windowWidth, int &windowHeight, int &windowPxX, int 
     glfwGetMonitorWorkarea(glfwGetPrimaryMonitor(), &windowWidth, &windowHeight, &windowPxX, &windowPxY);
 
     // make window
-    window = glfwCreateWindow(windowPxX, windowPxY, "Aidan Becker Assignment 5", NULL, NULL);
+    window = glfwCreateWindow(windowPxX, windowPxY, "Aidan Becker Final Project", NULL, NULL);
     if (window == NULL)
     {
         fprintf(stderr, "Failed to open GLFW window. If you have an Intel GPU, they are not 3.3 compatible.\n");
