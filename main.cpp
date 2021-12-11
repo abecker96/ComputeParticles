@@ -454,6 +454,9 @@ void initSSBOs()
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, posSSbo);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, velSSbo);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, colSSbo);
+
+    // Ensures accesses to the SSBOs "reflect" writes from compute shader
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 }
 
 void toggleCameraInput()
@@ -832,15 +835,19 @@ int main()
         // run compute shader
         if (runSim)
         {
+            // Swap to compute shader
             glUseProgram(computeShader);
+            // update uniforms
             updateComputeShader(deltaTime);
+            // actually run the compute shader
             glDispatchCompute(NUM_PARTICLES / WORK_GROUP_SIZE, 1, 1);
-            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
         }
 
-        // render particles
+        // swap to basic vertex shader
         glUseProgram(renderShader);
+        // update uniforms, mainly (M)VP matrices
         updateRenderShader();
+        // draw
         glDrawArrays(GL_POINTS, 0, NUM_PARTICLES);
 
         // render ImGui

@@ -12,6 +12,7 @@ layout( std430, binding=6 ) buffer Col
 {   vec4 Colors[];  };
 
 // local work group is 100 large. I believe ideal local size would be GCD(num_cores, num_particles)
+// More testing needed
 layout( local_size_x = 100, local_size_y = 1, local_size_z = 1 ) in;
 
 // uniform control variables
@@ -28,7 +29,7 @@ uniform vec3 endColor;
 uniform vec4 sphere;        //xyz position, w radius
 
 // Function just checks if a position is inside of a sphere or not
-bool IsInsideSphere( vec3 p, vec4 s )
+bool isInsideSphere( vec3 p, vec4 s )
 {
     float r = length( p - s.xyz );
     return ( r < s.w );
@@ -63,10 +64,14 @@ void main() {
     accelVec += accelTowardsBH(p, blackHole2);
 
     // Use Verlet Integration for physics modeling
-    vec3 pp = p + v*DT + 0.5*DT*DT*accelVec*(sign(DT));
+    // Though there are still some kinks to work out with
+    // negative timesteps, I believe *sign(DT) should at least
+    // make them slightly more accurate. I'm not entirely sure about this.
+    // Looks cool though
+    vec3 pp = p + v*DT + 0.5*DT*DT*accelVec*sign(DT);
     vec3 vp = v + accelVec*DT;
 
-    if( sphereEnable == 1 && !IsInsideSphere( pp, sphere ) )
+    if( sphereEnable == 1 && !isInsideSphere( pp, sphere ) )
     {
         // If new point is outside of the sphere, and the sphere should exist
         // Set new point to be very close to the edge of the sphere
